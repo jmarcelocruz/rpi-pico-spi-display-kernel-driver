@@ -1,0 +1,16 @@
+/dts-v1/;
+/plugin/;
+
+&spidev0 {
+    status = "disabled";
+};
+
+&spi0 {
+    #address-cells = <1>;
+    #size-cells = <0>;
+
+    pico_display: pico_display@0 {
+        compatible = "pico_display_drv";
+        reg = <0>;
+    };
+};
