@@ -21,16 +21,18 @@ static struct pico_display_drv_private_data {
 
 ssize_t pico_display_write (struct file *filp, const char __user *buf, size_t count, loff_t *off) {
     char c;
-    copy_from_user(&c, buf, 1);
-
-    pr_info("pico_display_write %c\n", c);
+    if (copy_from_user(&c, buf, 1) != 0) {
+        return -1;
+    }
 
     struct spi_transfer transfer = {
         .tx_buf = &c,
         .len = 1,
     };
 
-    spi_sync_transfer(pico_display_drv_private_data.pico_display_private_data.spi_device, &transfer, 1);
+    if (spi_sync_transfer(pico_display_drv_private_data.pico_display_private_data.spi_device, &transfer, 1) < 0) {
+        return -1;
+    }
 
     return 1;
 }
@@ -55,10 +57,19 @@ static int pico_display_drv_probe(struct spi_device *spi_device) {
     pico_display_drv_private_data.pico_display_private_data.spi_device = spi_device;
 
     cdev_init(&pico_display_drv_private_data.pico_display_private_data.cdev, &pico_display_drv_private_data.fops);
-    cdev_add(&pico_display_drv_private_data.pico_display_private_data.cdev, pico_display_drv_private_data.pico_display_base_device_number, 1);
-    device_create(pico_display_drv_private_data.pico_display_class, NULL, pico_display_drv_private_data.pico_display_base_device_number, NULL, "pico_display0");
+    if (cdev_add(&pico_display_drv_private_data.pico_display_private_data.cdev, pico_display_drv_private_data.pico_display_base_device_number, 1) < 0) {
+        goto cleanup0;
+    }
+    if (IS_ERR(device_create(pico_display_drv_private_data.pico_display_class, NULL, pico_display_drv_private_data.pico_display_base_device_number, NULL, "pico_display0"))) {
+        goto cleanup1;
+    }
 
     return 0;
+
+cleanup1:
+    cdev_del(&pico_display_drv_private_data.pico_display_private_data.cdev);
+cleanup0:
+    return -1;
 }
 
 static void pico_display_drv_remove(struct spi_device *spi_device) {
@@ -93,14 +104,29 @@ static int __init pico_display_drv_init(void) {
             .open = pico_display_open,
             .release = pico_display_release,
         },
-        .pico_display_class = class_create(PICO_DISPLAY_CLASS_NAME),
     };
-    alloc_chrdev_region(&pico_display_drv_private_data.pico_display_base_device_number,
-            0, 1, PICO_DISPLAY_DRIVER_NAME);
+    pico_display_drv_private_data.pico_display_class = class_create(PICO_DISPLAY_CLASS_NAME);
+    if (IS_ERR(pico_display_drv_private_data.pico_display_class)) {
+        goto cleanup0;
+    }
 
-    spi_register_driver(&pico_display_drv_private_data.spi_driver);
+    if (alloc_chrdev_region(&pico_display_drv_private_data.pico_display_base_device_number,
+            0, 1, PICO_DISPLAY_DRIVER_NAME) < 0) {
+        goto cleanup1;
+    }
+
+    if (spi_register_driver(&pico_display_drv_private_data.spi_driver) < 0) {
+        goto cleanup2;
+    }
 
     return 0;
+
+cleanup2:
+    unregister_chrdev_region(pico_display_drv_private_data.pico_display_base_device_number, 1);
+cleanup1:
+    class_destroy(pico_display_drv_private_data.pico_display_class);
+cleanup0:
+    return -1;
 }
 
 static void __exit pico_display_drv_exit(void) {
